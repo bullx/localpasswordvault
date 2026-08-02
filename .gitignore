@@ -1,0 +1,54 @@
+﻿# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Vault & secrets — NEVER commit these
+localpasswordvault.db
+localpasswordvault.db.bak
+localpasswordvault.db-wal
+localpasswordvault.db-shm
+localpasswordvault.db-journal
+localpasswordvault.2fa
+localpasswordvault.2fa.tmp
+# Legacy SecureVault filenames (pre-rename)
+securevault.db
+securevault.db.bak
+securevault.db-wal
+securevault.db-shm
+securevault.db-journal
+securevault.2fa
+securevault.2fa.tmp
+*.bak
+*.export.json
+
+# PyInstaller
+*.manifest
+warn-*.txt
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local session notes (optional private)
+cursor_plan.md

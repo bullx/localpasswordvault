@@ -1,0 +1,8 @@
+# Runtime (pin loosely for clone-and-run; use pyproject.toml for packaging metadata)
+cryptography>=42.0.0
+customtkinter>=6.0.0
+qrcode>=7.4
+
+# Transitive pins commonly resolved on Windows wheels (optional explicit pins)
+cffi>=1.16.0
+pycparser>=2.21
