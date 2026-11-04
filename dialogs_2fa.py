@@ -127,7 +127,7 @@ class TwoFASetupDialog(ctk.CTkToplevel):
             self._page = 2; self._build_page()
         else:
             self._verify_msg.config(
-                text="❌  Code incorrect. Make sure your phone's clock is accurate.")
+                text="Code incorrect. Make sure your phone's clock is accurate.")
 
     # ── Page 3: Recovery codes ──
 
@@ -176,7 +176,7 @@ class TwoFASetupDialog(ctk.CTkToplevel):
 
         br = ctk.CTkFrame(f, fg_color=C["bg"], corner_radius=0)
         br.pack(fill="x", pady=(12, 0))
-        abtn(br, "✅  Done — 2FA is active", self._finish).pack(side="right")
+        abtn(br, "Done — 2FA is active", self._finish).pack(side="right")
 
     def _finish(self):
         if not self._confirmed.get():
@@ -215,8 +215,8 @@ class TransferQRDialog(ctk.CTkToplevel):
         f = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         f.pack(fill="both", expand=True, padx=28, pady=24)
 
-        tk.Label(f, text="📱  Transfer Authenticator",
-                 bg=C["bg"], fg=C["accent"], font=_font(14,"bold")).pack(anchor="w")
+        tk.Label(f, text="Transfer authenticator",
+                 bg=C["bg"], fg=C["text"], font=_font(14,"bold")).pack(anchor="w")
         tk.Label(f,
                  text="Scan this QR code into your new Authenticator app.\n"
                       "Both apps will then generate the same codes.",
@@ -260,8 +260,8 @@ class RecoveryCodesDialog(ctk.CTkToplevel):
         f = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         f.pack(fill="both", expand=True, padx=28, pady=24)
 
-        hdr = "🔄  Recovery Codes Regenerated" if regenerated else "✅  Recovery Codes"
-        tk.Label(f, text=hdr, bg=C["bg"], fg=C["accent"],
+        hdr = "Recovery codes regenerated" if regenerated else "Recovery codes"
+        tk.Label(f, text=hdr, bg=C["bg"], fg=C["text"],
                  font=_font(13,"bold")).pack(anchor="w")
         tk.Label(f,
                  text="Each code can be used ONCE. Save them somewhere safe.\n"
@@ -341,7 +341,7 @@ class TwoFACodeActionDialog(ctk.CTkToplevel):
         if result is True:
             self.destroy()
         elif result is False:
-            self._msg.config(text="❌  Incorrect Authenticator code. Try again.")
+            self._msg.config(text="Incorrect authenticator code. Try again.")
         # None means caller handled it (shouldn't happen but guard anyway)
 
 
@@ -367,7 +367,7 @@ class DisableTwoFADialog(ctk.CTkToplevel):
         f = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         f.pack(fill="both", expand=True, padx=28, pady=24)
 
-        tk.Label(f, text="⚠️  Disable Two-Factor Authentication",
+        tk.Label(f, text="Disable two-factor authentication",
                  bg=C["bg"], fg=C["danger"], font=_font(13,"bold")).pack(anchor="w")
         tk.Label(f,
                  text="This will delete localpasswordvault.2fa and remove 2FA protection.\n"
@@ -407,4 +407,4 @@ class DisableTwoFADialog(ctk.CTkToplevel):
             if self._on_done:
                 self._on_done()
         else:
-            self._msg.config(text="❌  Incorrect Authenticator code.")
+            self._msg.config(text="Incorrect authenticator code.")

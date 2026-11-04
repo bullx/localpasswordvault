@@ -3,15 +3,14 @@ Settings Tab — master password rotation, recovery passphrase, export/import,
 backup status, app-level 2FA management, and the security architecture summary.
 """
 import sys
-import tkinter as tk
 import customtkinter as ctk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import messagebox, filedialog
 
-from config import C, PLATFORM, VAULT_FILE, BAK_FILE, _font, font_title, pad, ctk_font_title
+from config import C, PLATFORM, BAK_FILE, _font, pad, ctk_font_title, ctk_font_caption, get_theme, save_theme
 from crypto import pw_strength
 from totp import tfa
 from vault_db import vault
-from ui_common import _bind_mousewheel, EWP, StrengthBar, sep, card, info_row, abtn, gbtn, dbtn
+from ui_common import EWP, SecretEntry, StrengthBar, sep, card, info_row, abtn, gbtn, dbtn
 from ui_async import run_async, is_busy
 from dialogs_2fa import (TwoFASetupDialog, TransferQRDialog, RecoveryCodesDialog,
                           TwoFACodeActionDialog, DisableTwoFADialog)
@@ -24,29 +23,40 @@ class SettingsTab(ctk.CTkFrame):
         self._build()
 
     def _build(self):
-        cv = tk.Canvas(self, bg=C["bg"], highlightthickness=0)
-        sb = ttk.Scrollbar(self, orient="vertical", command=cv.yview)
-        cv.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y"); cv.pack(side="left", fill="both", expand=True)
-        inn = ctk.CTkFrame(cv, fg_color=C["bg"], corner_radius=0)
-        wid = cv.create_window(0,0,anchor="nw",window=inn)
-        inn.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
-        cv.bind("<Configure>",  lambda e: cv.itemconfig(wid, width=e.width))
-        _bind_mousewheel(cv)
+        inn = ctk.CTkScrollableFrame(self, fg_color=C["bg"], corner_radius=0)
+        inn.pack(fill="both", expand=True)
 
-        ctk.CTkLabel(inn, text="Settings & Security", fg_color="transparent", text_color=C["white"],
-                     font=ctk_font_title()).pack(anchor="w", padx=pad(24), pady=(pad(18), pad(18)))
+        ctk.CTkLabel(inn, text="Settings and security", fg_color="transparent", text_color=C["text"],
+                     font=ctk_font_title()).pack(anchor="w", padx=pad(24), pady=(pad(18), pad(12)))
+
+        theme = card(inn, "Appearance", "Light or dark. The open screen is rebuilt when you switch.")
+        theme.pack(fill="x", padx=24, pady=(0, 12))
+        theme_i = ctk.CTkFrame(theme, fg_color=C["surface"], corner_radius=0)
+        theme_i.pack(fill="x", padx=16, pady=(0, 14))
+        self._theme_btns = {}
+        row = ctk.CTkFrame(theme_i, fg_color="transparent")
+        row.pack(anchor="w")
+        current = "Dark" if get_theme() == "dark" else "Light"
+        for label in ("Light", "Dark"):
+            btn = ctk.CTkButton(
+                row, text=label, width=pad(88), height=pad(32),
+                font=ctk_font_caption("bold"), corner_radius=pad(8),
+                command=lambda v=label: self._set_theme(v),
+            )
+            btn.pack(side="left", padx=(0, 6))
+            self._theme_btns[label] = btn
+        self._paint_theme(current)
 
         # ── Change master password ──
         c1 = card(inn, "Change Master Password",
                   "Re-wraps the vault key under your new master password."); c1.pack(fill="x", padx=24, pady=(0,12))
         ci = ctk.CTkFrame(c1, fg_color=C["surface"], corner_radius=0)
         ci.pack(fill="x", padx=16, pady=(0, 14))
-        self._old  = EWP(ci, placeholder="Current master password", show_char="•")
+        self._old = SecretEntry(ci, placeholder="Current master password")
         self._old.pack(fill="x", pady=(0, 6))
-        self._new  = EWP(ci, placeholder="New master password", show_char="•")
+        self._new = SecretEntry(ci, placeholder="New master password")
         self._new.pack(fill="x", pady=(0, 6))
-        self._new2 = EWP(ci, placeholder="Confirm new password", show_char="•")
+        self._new2 = SecretEntry(ci, placeholder="Confirm new password")
         self._new2.pack(fill="x", pady=(0, 6))
         self._nbar = StrengthBar(ci)
         self._nbar.pack(fill="x", pady=(0, 3))
@@ -74,17 +84,17 @@ class SettingsTab(ctk.CTkFrame):
         ctk.CTkLabel(c2i, text="Master password (to authorise change)",
                      fg_color="transparent", text_color=C["subtext"],
                      font=_font(9)).pack(anchor="w")
-        self._rec_auth = EWP(c2i, placeholder="Master password", show_char="•")
+        self._rec_auth = SecretEntry(c2i, placeholder="Master password")
         self._rec_auth.pack(fill="x", pady=(4, 8))
         ctk.CTkLabel(c2i, text="New recovery passphrase",
                      fg_color="transparent", text_color=C["subtext"],
                      font=_font(9)).pack(anchor="w")
-        self._rec_new = EWP(c2i, placeholder="e.g. My dog Biscuit was born in 2015", show_char="•")
+        self._rec_new = SecretEntry(c2i, placeholder="e.g. My dog Biscuit was born in 2015")
         self._rec_new.pack(fill="x", pady=(4, 6))
         ctk.CTkLabel(c2i, text="Confirm recovery passphrase",
                      fg_color="transparent", text_color=C["subtext"],
                      font=_font(9)).pack(anchor="w")
-        self._rec_new2 = EWP(c2i, placeholder="Confirm recovery passphrase", show_char="•")
+        self._rec_new2 = SecretEntry(c2i, placeholder="Confirm recovery passphrase")
         self._rec_new2.pack(fill="x", pady=(4, 8))
         self._recmsg = ctk.CTkLabel(c2i, text="", fg_color="transparent",
                                     text_color=C["danger"], font=_font(10))
@@ -99,8 +109,8 @@ class SettingsTab(ctk.CTkFrame):
         c_idle_i.pack(fill="x", padx=16, pady=(0, 14))
         row_idle = ctk.CTkFrame(c_idle_i, fg_color=C["surface"], corner_radius=0)
         row_idle.pack(fill="x")
-        tk.Label(row_idle, text="Minutes (0 = disabled):", bg=C["surface"],
-                 fg=C["subtext"], font=_font(10)).pack(side="left")
+        ctk.CTkLabel(row_idle, text="Minutes (0 = disabled)", fg_color="transparent",
+                     text_color=C["subtext"], font=_font(10)).pack(side="left")
         self._idle_entry = EWP(row_idle, placeholder="5")
         self._idle_entry.pack(side="left", padx=(8, 8))
         self._idle_entry.set_val(str(vault.get_idle_lock_minutes()))
@@ -115,23 +125,23 @@ class SettingsTab(ctk.CTkFrame):
                   ); c3.pack(fill="x", padx=24, pady=(0,12))
         c3i = ctk.CTkFrame(c3, fg_color=C["surface"], corner_radius=0)
         c3i.pack(fill="x", padx=16, pady=(0, 14))
-        tk.Label(c3i, text=(
-            "Export encrypts all entries with a passphrase YOU choose.\n"
-            "The export file is useless without that passphrase.\n"
-            "Store the export somewhere safe (Dropbox, USB, email draft)."),
-            bg=C["surface"], fg=C["subtext"], font=_font(9), justify="left"
-        ).pack(anchor="w", pady=(0,10))
-        self._exp_pp = EWP(c3i, placeholder="Export passphrase (can differ from master)", show_char="•")
+        ctk.CTkLabel(c3i, text=(
+            "Export encrypts every entry with a passphrase you choose.\n"
+            "The file is useless without that passphrase.\n"
+            "Importing the same file again updates matching entries instead of duplicating them."),
+            fg_color="transparent", text_color=C["subtext"], font=_font(9), justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+        self._exp_pp = SecretEntry(c3i, placeholder="Export passphrase (can differ from master)")
         self._exp_pp.pack(fill="x", pady=(0, 6))
-        self._exp_pp2 = EWP(c3i, placeholder="Confirm export passphrase", show_char="•")
+        self._exp_pp2 = SecretEntry(c3i, placeholder="Confirm export passphrase")
         self._exp_pp2.pack(fill="x", pady=(0, 8))
         self._expmsg = ctk.CTkLabel(c3i, text="", fg_color="transparent",
                                     text_color=C["danger"], font=_font(10))
         self._expmsg.pack(anchor="w", pady=(0, 8))
         er = ctk.CTkFrame(c3i, fg_color=C["surface"], corner_radius=0)
         er.pack(fill="x")
-        gbtn(er, "📤 Export to file…", self._export).pack(side="left")
-        gbtn(er, "📥 Import from file…", self._import).pack(side="left", padx=8)
+        gbtn(er, "Export to file…", self._export).pack(side="left")
+        gbtn(er, "Import from file…", self._import).pack(side="left", padx=8)
 
         # ── Backup info ──
         c4 = card(inn, "Backup",
@@ -140,15 +150,16 @@ class SettingsTab(ctk.CTkFrame):
         c4i = ctk.CTkFrame(c4, fg_color=C["surface"], corner_radius=0)
         c4i.pack(fill="x", padx=16, pady=(0, 14))
         bak_exists = vault.backup_exists()
-        bak_color  = C["success"] if bak_exists else C["danger"]
-        bak_text   = f"✅  Backup exists: {BAK_FILE}" if bak_exists else f"⚠️  No backup yet: {BAK_FILE}"
-        tk.Label(c4i, text=bak_text, bg=C["surface"], fg=bak_color,
-                 font=_font(10), wraplength=480, justify="left").pack(anchor="w", pady=(0,6))
-        tk.Label(c4i,
-            text="The backup file requires the SAME master password as the main vault.\n"
-                 "To restore: delete/rename localpasswordvault.db, rename .db.bak to .db, reopen app.\n"
-                 "Or use the 'Restore from backup' button on the unlock screen.",
-            bg=C["surface"], fg=C["subtext"], font=_font(9), justify="left"
+        bak_color = C["success"] if bak_exists else C["danger"]
+        bak_text = f"Backup exists: {BAK_FILE}" if bak_exists else f"No backup yet: {BAK_FILE}"
+        ctk.CTkLabel(c4i, text=bak_text, fg_color="transparent", text_color=bak_color,
+                     font=_font(10), wraplength=640, justify="left").pack(anchor="w", pady=(0, 6))
+        ctk.CTkLabel(
+            c4i,
+            text="The backup uses the same master password as the vault.\n"
+                 "It is a consistent SQLite snapshot, including the latest save.\n"
+                 "Restore it from the unlock screen if the vault file is damaged.",
+            fg_color="transparent", text_color=C["subtext"], font=_font(9), justify="left",
         ).pack(anchor="w")
 
         # ── App 2FA ──
@@ -167,19 +178,16 @@ class SettingsTab(ctk.CTkFrame):
             tfa.is_committed(vault._master) if vault.unlocked else tfa.enabled()
         ) else "OFF")
         for alg,val,desc in [
-            ("Storage",    "SQLite + WAL",      "Atomic writes, corruption-resistant journaling"),
-            ("Encryption", "Field-level",       "Each password encrypted individually in DB"),
-            ("KDF",        "Argon2id",          "Memory-hard, OWASP recommended, GPU-resistant"),
-            ("Cipher",     "AES-256-GCM",       "NIST authenticated encryption, detects tampering"),
-            ("Auth Tag",   "128-bit",           "Any modification invalidates decryption"),
-            ("Salt",       "128-bit random",    "Per-field, prevents precomputation"),
-            ("Nonce",      "96-bit random",     "Per-field, guarantees ciphertext uniqueness"),
-            ("Memory",     "64 MiB",            "Argon2id cost parameter"),
-            ("Iterations", "3 passes",          "Argon2id time parameter"),
-            ("App 2FA",    tfa_status,          "TOTP secret in localpasswordvault.2fa (encrypted)"),
-            ("Recovery",   "User passphrase",   "Second Argon2id-derived key, never stored"),
-            ("Backup",     ".db.bak auto",      "Same encryption, written after every save"),
-            ("Platform",   PLATFORM,            f"Python {sys.version.split()[0]}"),
+            ("Storage", "SQLite + WAL", "Consistent backup via the SQLite backup API"),
+            ("Entries", "AES-256-GCM", "Title, username, URL, notes, password, TOTP"),
+            ("Data key", "Random DEK", "Wrapped by the master and optional recovery passphrase"),
+            ("KDF", "Argon2id", "Used for passphrases only, not for each field"),
+            ("Field nonce", "96-bit", "Unique per field; column name is authenticated"),
+            ("Memory", "64 MiB", "Argon2id cost for master, recovery, export, and files"),
+            ("App 2FA", tfa_status, "TOTP secret in localpasswordvault.2fa"),
+            ("Recovery", "Separate passphrase", "Unlocks the same DEK and forces a new master"),
+            ("Clipboard", "30 seconds", "Cleared on lock if it still holds the copied secret"),
+            ("Platform", PLATFORM, f"Python {sys.version.split()[0]}"),
         ]:
             info_row(c5i, alg, val, desc)
 
@@ -189,16 +197,39 @@ class SettingsTab(ctk.CTkFrame):
         dz.pack(fill="x", padx=24, pady=(0, 24))
         di = ctk.CTkFrame(dz, fg_color=C["surface"], corner_radius=0)
         di.pack(fill="x", padx=16, pady=14)
-        tk.Label(di, text="⚠️  Danger Zone", bg=C["surface"],
-                 fg=C["danger"], font=_font(12,"bold")).pack(anchor="w", pady=(0,6))
-        tk.Label(di, text="Lock vault — clears master password from memory.",
-                 bg=C["surface"], fg=C["subtext"], font=_font(10)).pack(anchor="w", pady=(0,8))
-        dbtn(di, "🔒 Lock Vault", self._lock).pack(anchor="w")
+        ctk.CTkLabel(di, text="Danger zone", fg_color="transparent",
+                     text_color=C["danger"], font=_font(12, "bold")).pack(anchor="w", pady=(0, 6))
+        ctk.CTkLabel(di, text="Lock the vault. This clears the master password from memory and the clipboard.",
+                     fg_color="transparent", text_color=C["subtext"], font=_font(10),
+                     justify="left").pack(anchor="w", pady=(0, 8))
+        dbtn(di, "Lock vault", self._lock).pack(anchor="w")
+
+    def _paint_theme(self, current):
+        for label, btn in self._theme_btns.items():
+            selected = label == current
+            btn.configure(
+                fg_color=C["primary"] if selected else C["surface"],
+                text_color=C["on_primary"] if selected else C["text"],
+                hover_color=C["primary"] if selected else C["surface3"],
+                border_width=0 if selected else 1,
+                border_color=C["border"],
+            )
+
+    def _set_theme(self, value):
+        mode = "dark" if str(value).lower().startswith("d") else "light"
+        label = "Dark" if mode == "dark" else "Light"
+        self._paint_theme(label)
+        if mode == get_theme():
+            return
+        save_theme(mode)
+        root = self.winfo_toplevel()
+        if hasattr(root, "rebuild_for_theme"):
+            root.rebuild_for_theme()
 
     def _refresh_rec_status(self):
         has = vault.has_recovery()
         self._rec_status.configure(
-            text="✅  Recovery passphrase is set." if has else "⚠️  No recovery passphrase set.",
+            text="Recovery passphrase is set." if has else "No recovery passphrase set.",
             text_color=C["success"] if has else C["warning"])
 
     def _upd_newpw(self, _=None):
@@ -225,7 +256,7 @@ class SettingsTab(ctk.CTkFrame):
         def done(ok):
             if ok:
                 self._chmsg.configure(
-                    text="✅ Master password changed.",
+                    text="Master password changed.",
                     text_color=C["success"])
                 for e in [self._old, self._new, self._new2]:
                     e._set_ph()
@@ -233,7 +264,7 @@ class SettingsTab(ctk.CTkFrame):
                 if hasattr(root, "_arm_idle_timer"):
                     root._arm_idle_timer()
             else:
-                self._chmsg.configure(text="❌ Current password incorrect.", text_color=C["danger"])
+                self._chmsg.configure(text="Current password incorrect.", text_color=C["danger"])
 
         run_async(self, work, done)
 
@@ -253,12 +284,16 @@ class SettingsTab(ctk.CTkFrame):
             self._idle_msg.configure(text=str(e), text_color=C["danger"])
             return
         self._idle_msg.configure(
-            text=("✅ Auto-lock disabled." if minutes == 0
-                  else f"✅ Auto-lock set to {minutes} minute(s)."),
+            text=("Auto-lock disabled." if minutes == 0
+                  else f"Auto-lock set to {minutes} minute(s)."),
             text_color=C["success"])
         root = self.winfo_toplevel()
         if hasattr(root, "_arm_idle_timer"):
             root._arm_idle_timer()
+        if hasattr(root, "refresh_status"):
+            root.refresh_status()
+        if hasattr(root, "refresh_status"):
+            root.refresh_status()
 
     def _change_recovery(self):
         auth = self._rec_auth.val()
@@ -273,12 +308,12 @@ class SettingsTab(ctk.CTkFrame):
             self._recmsg.configure(text="Recovery passphrases do not match.", text_color=C["danger"])
             return
         if vault.change_recovery(auth, new):
-            self._recmsg.configure(text="✅ Recovery passphrase updated.", text_color=C["success"])
+            self._recmsg.configure(text="Recovery passphrase updated.", text_color=C["success"])
             for e in [self._rec_auth, self._rec_new, self._rec_new2]:
                 e._set_ph()
             self._refresh_rec_status()
         else:
-            self._recmsg.configure(text="❌ Master password incorrect.", text_color=C["danger"])
+            self._recmsg.configure(text="Master password incorrect.", text_color=C["danger"])
 
     def _export(self):
         if is_busy(self):
@@ -303,11 +338,11 @@ class SettingsTab(ctk.CTkFrame):
 
         def done(count):
             self._expmsg.configure(
-                text=f"✅ Exported {count} entries → {path}", text_color=C["success"])
+                text=f"Exported {count} entries → {path}", text_color=C["success"])
 
         run_async(self, work, done,
                   on_error=lambda e: self._expmsg.configure(
-                      text=f"❌ Export failed: {e}", text_color=C["danger"]))
+                      text="Export failed.", text_color=C["danger"]))
 
     def _import(self):
         if is_busy(self):
@@ -317,20 +352,52 @@ class SettingsTab(ctk.CTkFrame):
             self._expmsg.configure(text="Enter the export passphrase first.", text_color=C["danger"])
             return
         path = filedialog.askopenfilename(
-            filetypes=[("Encrypted JSON","*.json"),("All","*.*")],
+            filetypes=[("Encrypted JSON", "*.json"), ("All", "*.*")],
             title="Open encrypted export")
-        if not path: return
-        self._expmsg.configure(text="Decrypting and importing…", text_color=C["subtext"])
+        if not path:
+            return
+        self._expmsg.configure(text="Reading export…", text_color=C["subtext"])
 
         def work():
-            return vault.import_encrypted_json(path, pp)
+            return vault.summarize_export(path, pp)
 
-        def done(n):
-            self._expmsg.configure(text=f"✅ Imported {n} entries.", text_color=C["success"])
+        def done(info):
+            n = info["count"]
+            noun = "entry" if n == 1 else "entries"
+            if not messagebox.askyesno(
+                "Import entries",
+                f"This file contains {n} {noun}.\n\n"
+                "Matching entries will be updated. New ones will be added.",
+            ):
+                vault.clear_staged_export()
+                self._expmsg.configure(text="Import cancelled.", text_color=C["subtext"])
+                return
+            self._expmsg.configure(text="Importing…", text_color=C["subtext"])
 
-        run_async(self, work, done,
-                  on_error=lambda e: self._expmsg.configure(
-                      text=f"❌ Import failed: {e}", text_color=C["danger"]))
+            def applied(count):
+                self._expmsg.configure(text=f"Imported {count} entries.", text_color=C["success"])
+                root = self.winfo_toplevel()
+                if hasattr(root, "refresh_status"):
+                    root.refresh_status()
+                tab = getattr(root, "_vault_tab", None)
+                if tab is not None:
+                    tab.refresh()
+
+            run_async(
+                self, lambda: vault.import_encrypted_json(path, pp), applied,
+                on_error=lambda _e: self._expmsg.configure(
+                    text="Import failed. Check the passphrase and file.",
+                    text_color=C["danger"]),
+            )
+
+        def failed(_e):
+            vault.clear_staged_export()
+            self._expmsg.configure(
+                text="Could not read that export. Check the passphrase and file.",
+                text_color=C["danger"],
+            )
+
+        run_async(self, work, done, on_error=failed)
 
     def _lock(self):
         if messagebox.askyesno("Lock Vault",
@@ -352,58 +419,63 @@ class SettingsTab(ctk.CTkFrame):
                  else tfa.enabled())
 
         if not is_on:
-            # ── 2FA OFF ──
-            tk.Label(f, text="🔓  Two-factor authentication is OFF.",
-                     bg=C["surface"], fg=C["subtext"], font=_font(11)).pack(anchor="w", pady=(0,8))
-            tk.Label(f,
-                     text="When enabled, every vault unlock requires your master password\n"
-                          "+ a 6-digit code from an Authenticator app (Google, Authy, etc.).\n\n"
-                          "Your TOTP secret is stored in localpasswordvault.2fa, encrypted with your\n"
-                          "master password. An attacker needs all three files + your password.",
-                     bg=C["surface"], fg=C["subtext"], font=_font(9), justify="left"
-                     ).pack(anchor="w", pady=(0,12))
-            abtn(f, "🔐  Enable Two-Factor Authentication", self._2fa_enable,
+            ctk.CTkLabel(f, text="Two-factor authentication is off.", fg_color="transparent",
+                         text_color=C["subtext"], font=_font(11)).pack(anchor="w", pady=(0, 8))
+            ctk.CTkLabel(
+                f,
+                text="When enabled, every unlock needs the master password and a 6-digit\n"
+                     "code from an authenticator app.\n\n"
+                     "The TOTP secret is stored in localpasswordvault.2fa, encrypted with the\n"
+                     "master password. Recovery passphrase unlock skips the authenticator\n"
+                     "and then requires a new master password.",
+                fg_color="transparent", text_color=C["subtext"], font=_font(9), justify="left",
+            ).pack(anchor="w", pady=(0, 12))
+            abtn(f, "Enable two-factor authentication", self._2fa_enable,
                  color=C["success"]).pack(anchor="w")
         else:
-            # ── 2FA ON ──
-            remaining  = tfa.recovery_codes_remaining()
-            codes_on   = tfa.codes_enabled()
-            rec_color  = C["success"] if remaining > 3 else (C["warning"] if remaining > 0 else C["danger"])
-            rec_text   = (f"✅  {remaining}/10 recovery codes remaining"
-                          if codes_on else "⚠️  Recovery codes are disabled")
+            remaining = tfa.recovery_codes_remaining()
+            codes_on = tfa.codes_enabled()
+            rec_color = C["success"] if remaining > 3 else (C["warning"] if remaining > 0 else C["danger"])
+            rec_text = (f"{remaining}/10 recovery codes remaining"
+                        if codes_on else "Recovery codes are disabled")
 
-            tk.Label(f, text="🔐  Two-factor authentication is ON.",
-                     bg=C["surface"], fg=C["success"], font=_font(11,"bold")).pack(anchor="w", pady=(0,6))
-            tk.Label(f, text=rec_text, bg=C["surface"], fg=rec_color,
-                     font=_font(10)).pack(anchor="w", pady=(0,10))
+            ctk.CTkLabel(f, text="Two-factor authentication is on.", fg_color="transparent",
+                         text_color=C["success"], font=_font(11, "bold")).pack(anchor="w", pady=(0, 6))
+            ctk.CTkLabel(f, text=rec_text, fg_color="transparent", text_color=rec_color,
+                         font=_font(10)).pack(anchor="w", pady=(0, 10))
 
-            sep(f, pady=(0,10))
-            tk.Label(f, text="Transfer to new phone",
-                     bg=C["surface"], fg=C["white"], font=_font(10,"bold")).pack(anchor="w")
-            tk.Label(f, text="Shows the QR code to scan into a new Authenticator app.\nNo code required — you must already be unlocked.",
-                     bg=C["surface"], fg=C["subtext"], font=_font(9), justify="left"
-                     ).pack(anchor="w", pady=(2,8))
-            gbtn(f, "📱  Show Transfer QR", self._2fa_show_qr).pack(anchor="w")
+            sep(f, pady=(0, 10))
+            ctk.CTkLabel(f, text="Transfer to a new phone", fg_color="transparent",
+                         text_color=C["text"], font=_font(10, "bold")).pack(anchor="w")
+            ctk.CTkLabel(
+                f, text="Shows the QR code for a new authenticator app. You must already be unlocked.",
+                fg_color="transparent", text_color=C["subtext"], font=_font(9), justify="left",
+            ).pack(anchor="w", pady=(2, 8))
+            gbtn(f, "Show transfer QR", self._2fa_show_qr).pack(anchor="w")
 
-            sep(f, pady=(10,10))
-            tk.Label(f, text="Recovery codes",
-                     bg=C["surface"], fg=C["white"], font=_font(10,"bold")).pack(anchor="w")
-            tk.Label(f, text="Each code can be used once to bypass Authenticator if you lose your phone.",
-                     bg=C["surface"], fg=C["subtext"], font=_font(9)).pack(anchor="w", pady=(2,8))
-            br = ctk.CTkFrame(f, fg_color=C["surface"], corner_radius=0)
+            sep(f, pady=(10, 10))
+            ctk.CTkLabel(f, text="Recovery codes", fg_color="transparent",
+                         text_color=C["text"], font=_font(10, "bold")).pack(anchor="w")
+            ctk.CTkLabel(
+                f, text="Each code works once if you lose the authenticator.",
+                fg_color="transparent", text_color=C["subtext"], font=_font(9),
+            ).pack(anchor="w", pady=(2, 8))
+            br = ctk.CTkFrame(f, fg_color="transparent")
             br.pack(anchor="w")
-            gbtn(br, "🔄  Regenerate Codes", self._2fa_regen_codes).pack(side="left")
+            gbtn(br, "Regenerate codes", self._2fa_regen_codes).pack(side="left")
             if codes_on:
-                gbtn(br, "🚫  Disable Codes", self._2fa_disable_codes).pack(side="left", padx=8)
+                gbtn(br, "Disable codes", self._2fa_disable_codes).pack(side="left", padx=8)
             else:
-                gbtn(br, "✅  Enable Codes", self._2fa_enable_codes).pack(side="left", padx=8)
+                gbtn(br, "Enable codes", self._2fa_enable_codes).pack(side="left", padx=8)
 
-            sep(f, pady=(10,10))
-            tk.Label(f, text="Danger zone",
-                     bg=C["surface"], fg=C["danger"], font=_font(10,"bold")).pack(anchor="w")
-            tk.Label(f, text="Disabling 2FA removes the .2fa file. You can re-enable at any time.",
-                     bg=C["surface"], fg=C["subtext"], font=_font(9)).pack(anchor="w", pady=(2,8))
-            dbtn(f, "⚠️  Disable 2FA…", self._2fa_disable).pack(anchor="w")
+            sep(f, pady=(10, 10))
+            ctk.CTkLabel(f, text="Danger zone", fg_color="transparent",
+                         text_color=C["danger"], font=_font(10, "bold")).pack(anchor="w")
+            ctk.CTkLabel(
+                f, text="Disabling 2FA removes the .2fa file. You can turn it on again later.",
+                fg_color="transparent", text_color=C["subtext"], font=_font(9),
+            ).pack(anchor="w", pady=(2, 8))
+            dbtn(f, "Disable 2FA…", self._2fa_disable).pack(anchor="w")
 
     # ── 2FA Enable flow ──
 

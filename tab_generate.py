@@ -1,5 +1,5 @@
 """
-Generate Tab — strong password generator and memorable passphrase generator.
+Generate tab — password generator and memorable passphrase generator.
 """
 import os
 import sys
@@ -7,9 +7,11 @@ import secrets
 import tkinter as tk
 import customtkinter as ctk
 
-from config import C, _font, font_title, font_caption, pad, _mono, ctk_font_title
-from crypto import gen_password, pw_strength
+from config import C, _font, pad, _mono, ctk_font_title, ctk_font_body, ctk_font_caption
+from crypto import gen_password, pw_strength, passphrase_entropy_bits
 from ui_common import StrengthBar, abtn, gbtn, copy_to_clipboard
+from vault_db import vault
+from tab_vault import EntryDialog
 
 
 def _load_wordlist() -> list[str]:
@@ -25,7 +27,6 @@ def _load_wordlist() -> list[str]:
             return words
     except OSError:
         pass
-    # Tiny fallback if wordlist.txt is missing
     return [
         "alpha", "bravo", "cedar", "delta", "ember", "frost", "grove", "harbor",
         "ivory", "jade", "kite", "lunar", "maple", "noble", "orbit", "pearl",
@@ -45,141 +46,198 @@ class GenerateTab(ctk.CTkFrame):
         self._build()
 
     def _build(self):
-        inn = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
-        inn.pack(fill="both", expand=True, padx=pad(24), pady=pad(18))
+        inn = ctk.CTkScrollableFrame(self, fg_color=C["bg"], corner_radius=0)
+        inn.pack(fill="both", expand=True, padx=pad(8), pady=pad(8))
 
-        ctk.CTkLabel(inn, text="Password Generator", fg_color="transparent", text_color=C["white"],
-                     font=ctk_font_title()).pack(anchor="w", pady=(0, pad(18)))
+        ctk.CTkLabel(inn, text="Password generator", fg_color="transparent", text_color=C["text"],
+                     font=ctk_font_title()).pack(anchor="w", padx=pad(16), pady=(pad(8), pad(12)))
 
-        of = ctk.CTkFrame(inn, fg_color=C["surface"], corner_radius=pad(10))
-        of.pack(fill="x", pady=(0, pad(12)))
-        op = ctk.CTkFrame(of, fg_color=C["surface"], corner_radius=0)
+        of = ctk.CTkFrame(inn, fg_color=C["surface"], corner_radius=pad(10),
+                          border_width=1, border_color=C["border"])
+        of.pack(fill="x", padx=pad(16), pady=(0, pad(12)))
+        op = ctk.CTkFrame(of, fg_color="transparent")
         op.pack(fill="x", padx=pad(16), pady=pad(14))
 
-        len_row = ctk.CTkFrame(op, fg_color=C["surface"], corner_radius=0)
+        len_row = ctk.CTkFrame(op, fg_color="transparent")
         len_row.pack(fill="x")
-        tk.Label(len_row, text="Length", bg=C["surface"], fg=C["subtext"],
-                 font=_font(10), width=8, anchor="w").pack(side="left")
-        self._len = tk.IntVar(value=20)
-        self._lenlbl = tk.Label(len_row, text="20", bg=C["surface"], fg=C["accent"],
-                                font=_font(12, "bold"), width=3)
-        self._lenlbl.pack(side="left")
-        scale_kw = dict(
-            from_=8, to=64, orient=tk.HORIZONTAL, variable=self._len,
-            command=lambda v: self._lenlbl.config(text=str(int(float(v)))),
-            bg=C["surface"], fg=C["accent"], troughcolor=C["surface2"],
-            highlightthickness=0, bd=0, showvalue=False, length=280,
+        ctk.CTkLabel(len_row, text="Length", fg_color="transparent", text_color=C["subtext"],
+                     font=ctk_font_caption()).pack(side="left")
+        self._length = 20
+        self._lenlbl = ctk.CTkLabel(len_row, text="20", fg_color="transparent",
+                                    text_color=C["accent"], font=ctk_font_body("bold"))
+        self._lenlbl.pack(side="left", padx=(8, 8))
+        slider = ctk.CTkSlider(
+            len_row, from_=8, to=64, number_of_steps=56,
+            command=self._on_len, progress_color=C["accent"], button_color=C["accent"],
+            button_hover_color=C["accent2"],
         )
-        try:
-            tk.Scale(len_row, **scale_kw).pack(side="left", fill="x", expand=True, padx=(4, 8))
-        except Exception:
-            scale_kw.pop("troughcolor", None)
-            tk.Scale(len_row, **scale_kw).pack(side="left", fill="x", expand=True, padx=(4, 8))
+        slider.set(20)
+        slider.pack(side="left", fill="x", expand=True)
 
         self._upper = tk.BooleanVar(value=True)
         self._lower = tk.BooleanVar(value=True)
         self._digits = tk.BooleanVar(value=True)
         self._symbols = tk.BooleanVar(value=True)
         self._noamb = tk.BooleanVar(value=True)
-        for lbl, var in [
+        for lbl, var in (
             ("Uppercase", self._upper), ("Lowercase", self._lower),
             ("Digits", self._digits), ("Symbols", self._symbols),
-            ("No ambiguous (0O1lI)", self._noamb),
-        ]:
-            tk.Checkbutton(op, text=lbl, variable=var, bg=C["surface"],
-                           fg=C["text"], activebackground=C["surface"],
-                           selectcolor=C["surface2"],
-                           font=_font(10), bd=0, command=self._gen
-                           ).pack(anchor="w", pady=2)
+            ("No ambiguous characters (0 O 1 l I)", self._noamb),
+        ):
+            ctk.CTkCheckBox(
+                op, text=lbl, variable=var, command=self._gen,
+                fg_color=C["accent"], hover_color=C["accent2"],
+                text_color=C["text"], font=ctk_font_caption(),
+            ).pack(anchor="w", pady=2)
 
-        abtn(op, "Generate Password", self._gen).pack(anchor="w", pady=(10, 0))
+        abtn(op, "Generate password", self._gen).pack(anchor="w", pady=(10, 0))
 
-        oc = ctk.CTkFrame(inn, fg_color=C["surface"], corner_radius=pad(10))
-        oc.pack(fill="x", pady=(0, pad(12)))
-        oi = ctk.CTkFrame(oc, fg_color=C["surface"], corner_radius=0)
+        oc = ctk.CTkFrame(inn, fg_color=C["surface"], corner_radius=pad(10),
+                          border_width=1, border_color=C["border"])
+        oc.pack(fill="x", padx=pad(16), pady=(0, pad(12)))
+        oi = ctk.CTkFrame(oc, fg_color="transparent")
         oi.pack(fill="x", padx=pad(16), pady=pad(14))
-        self._gout = tk.Label(oi, text="", bg=C["surface2"], fg=C["accent"],
-                              font=_mono(14, "bold"), anchor="w", padx=10, pady=10)
+        self._gout = ctk.CTkLabel(
+            oi, text="", fg_color=C["surface2"], text_color=C["text"],
+            font=_mono(14, "bold"), anchor="w", corner_radius=pad(8),
+            padx=10, pady=10,
+        )
         self._gout.pack(fill="x")
         self._gbar = StrengthBar(oi)
         self._gbar.pack(fill="x", pady=(8, 2))
         self._glbl = ctk.CTkLabel(oi, text="", fg_color="transparent",
-                                  text_color=C["subtext"], font=_font(10))
+                                  text_color=C["subtext"], font=ctk_font_caption())
         self._glbl.pack(anchor="w")
-        gr = ctk.CTkFrame(oi, fg_color=C["surface"], corner_radius=0)
+        gr = ctk.CTkFrame(oi, fg_color="transparent")
         gr.pack(fill="x", pady=(8, 0))
-        gbtn(gr, "Copy", self._copy_gen).pack(side="left")
+        self._copy_gen_btn = gbtn(gr, "Copy", self._copy_gen)
+        self._copy_gen_btn.pack(side="left")
+        gbtn(gr, "Save to vault", self._save_gen).pack(side="left", padx=8)
 
-        hf = ctk.CTkFrame(inn, fg_color=C["surface"], corner_radius=pad(10))
-        hf.pack(fill="x", pady=(0, pad(12)))
-        hi = ctk.CTkFrame(hf, fg_color=C["surface"], corner_radius=0)
+        hf = ctk.CTkFrame(inn, fg_color=C["surface"], corner_radius=pad(10),
+                          border_width=1, border_color=C["border"])
+        hf.pack(fill="x", padx=pad(16), pady=(0, pad(12)))
+        hi = ctk.CTkFrame(hf, fg_color="transparent")
         hi.pack(fill="x", padx=pad(16), pady=pad(14))
-        tk.Label(hi, text="History (session only)", bg=C["surface"],
-                 fg=C["subtext"], font=_font(10)).pack(anchor="w", pady=(0, 6))
-        self._hframe = ctk.CTkFrame(hi, fg_color=C["surface"], corner_radius=0)
-        self._hframe.pack(fill="x")
+        head = ctk.CTkFrame(hi, fg_color="transparent")
+        head.pack(fill="x")
+        ctk.CTkLabel(head, text="History (this session only)", fg_color="transparent",
+                     text_color=C["subtext"], font=ctk_font_caption()).pack(side="left")
+        gbtn(head, "Clear history", self._clear_history).pack(side="right")
+        self._hframe = ctk.CTkFrame(hi, fg_color="transparent")
+        self._hframe.pack(fill="x", pady=(8, 0))
 
-        pf = ctk.CTkFrame(inn, fg_color=C["surface"], corner_radius=pad(10))
-        pf.pack(fill="x")
-        pi = ctk.CTkFrame(pf, fg_color=C["surface"], corner_radius=0)
+        pf = ctk.CTkFrame(inn, fg_color=C["surface"], corner_radius=pad(10),
+                          border_width=1, border_color=C["border"])
+        pf.pack(fill="x", padx=pad(16), pady=(0, pad(16)))
+        pi = ctk.CTkFrame(pf, fg_color="transparent")
         pi.pack(fill="x", padx=pad(16), pady=pad(14))
-        tk.Label(pi, text="Passphrase Generator", bg=C["surface"],
-                 fg=C["white"], font=_font(12, "bold")).pack(anchor="w", pady=(0, 4))
-        tk.Label(
-            pi,
-            text=f"Memorable random-word passphrases ({len(_WORDS)}-word list).",
-            bg=C["surface"], fg=C["subtext"], font=_font(9),
+        ctk.CTkLabel(pi, text="Passphrase generator", fg_color="transparent",
+                     text_color=C["text"], font=ctk_font_body("bold")).pack(anchor="w", pady=(0, 4))
+        ctk.CTkLabel(
+            pi, text=f"Random words from a {len(_WORDS)}-word list.",
+            fg_color="transparent", text_color=C["subtext"], font=ctk_font_caption(),
         ).pack(anchor="w", pady=(0, 10))
         self._wc = tk.IntVar(value=5)
-        wr = ctk.CTkFrame(pi, fg_color=C["surface"], corner_radius=0)
+        wr = ctk.CTkFrame(pi, fg_color="transparent")
         wr.pack(fill="x")
-        tk.Label(wr, text="Words:", bg=C["surface"], fg=C["subtext"],
-                 font=_font(10)).pack(side="left")
+        ctk.CTkLabel(wr, text="Words", fg_color="transparent", text_color=C["subtext"],
+                     font=ctk_font_caption()).pack(side="left", padx=(0, 8))
         for n in (4, 5, 6, 7, 8):
-            tk.Radiobutton(wr, text=str(n), variable=self._wc, value=n,
-                           bg=C["surface"], fg=C["text"],
-                           activebackground=C["surface"], selectcolor=C["surface2"],
-                           font=_font(10), bd=0
-                           ).pack(side="left", padx=4)
-        abtn(pi, "Generate Passphrase", self._gen_phrase).pack(anchor="w", pady=(10, 8))
-        self._pout = tk.Label(pi, text="", bg=C["surface2"], fg=C["success"],
-                              font=_mono(12, "bold"), anchor="w", padx=10, pady=10)
+            ctk.CTkRadioButton(
+                wr, text=str(n), variable=self._wc, value=n, command=self._gen_phrase,
+                fg_color=C["accent"], hover_color=C["accent2"],
+                text_color=C["text"], font=ctk_font_caption(),
+            ).pack(side="left", padx=4)
+        abtn(pi, "Generate passphrase", self._gen_phrase).pack(anchor="w", pady=(10, 8))
+        self._pout = ctk.CTkLabel(
+            pi, text="", fg_color=C["surface2"], text_color=C["text"],
+            font=_mono(12, "bold"), anchor="w", corner_radius=pad(8), padx=10, pady=10,
+        )
         self._pout.pack(fill="x")
-        pr = ctk.CTkFrame(pi, fg_color=C["surface"], corner_radius=0)
+        self._pbits = ctk.CTkLabel(pi, text="", fg_color="transparent",
+                                   text_color=C["subtext"], font=ctk_font_caption())
+        self._pbits.pack(anchor="w", pady=(6, 0))
+        pr = ctk.CTkFrame(pi, fg_color="transparent")
         pr.pack(fill="x", pady=(8, 0))
-        gbtn(pr, "Copy", self._copy_phrase).pack(side="left")
+        self._copy_phrase_btn = gbtn(pr, "Copy", self._copy_phrase)
+        self._copy_phrase_btn.pack(side="left")
+        gbtn(pr, "Save to vault", self._save_phrase).pack(side="left", padx=8)
 
         self._gen()
+        self._gen_phrase()
+
+    def _on_len(self, value):
+        self._length = int(round(float(value)))
+        self._lenlbl.configure(text=str(self._length))
 
     def _gen(self):
-        pw = gen_password(self._len.get(), self._upper.get(), self._lower.get(),
-                          self._digits.get(), self._symbols.get(), self._noamb.get())
-        self._gout.config(text=pw)
+        pw = gen_password(
+            self._length, self._upper.get(), self._lower.get(),
+            self._digits.get(), self._symbols.get(), self._noamb.get(),
+        )
+        self._gout.configure(text=pw)
         sc, lbl, col = pw_strength(pw)
         self._gbar.set_score(sc, col)
         self._glbl.configure(text=lbl, text_color=col)
-        self._history = ([pw] + self._history)[:6]
+        self._history = ([pw] + [h for h in self._history if h != pw])[:6]
+        self._render_history()
+
+    def _render_history(self):
         for w in self._hframe.winfo_children():
             w.destroy()
+        if not self._history:
+            ctk.CTkLabel(self._hframe, text="History is empty.", fg_color="transparent",
+                         text_color=C["subtext"], font=ctk_font_caption()).pack(anchor="w")
+            return
         for h in self._history:
-            r = ctk.CTkFrame(self._hframe, fg_color=C["surface"], corner_radius=0)
+            r = ctk.CTkFrame(self._hframe, fg_color="transparent")
             r.pack(fill="x", pady=1)
-            tk.Label(r, text=h, bg=C["surface"], fg=C["subtext"],
-                     font=_mono(10)).pack(side="left")
-            def mk(h=h):
-                def cp(): copy_to_clipboard(self, h)
-                return cp
-            gbtn(r, "Copy", mk()).pack(side="right")
+            ctk.CTkLabel(r, text=h, fg_color="transparent", text_color=C["subtext"],
+                         font=_mono(10), anchor="w").pack(side="left")
+            btn = gbtn(r, "Copy", lambda: None)
+            btn.configure(command=lambda b=btn, value=h: copy_to_clipboard(self, value, button=b))
+            btn.pack(side="right")
+
+    def _clear_history(self):
+        self._history = []
+        self._render_history()
 
     def _copy_gen(self):
         pw = self._gout.cget("text")
         if pw:
-            copy_to_clipboard(self, pw)
+            copy_to_clipboard(self, pw, button=self._copy_gen_btn)
+
+    def _save_password(self, pw: str):
+        if not pw or not vault.unlocked:
+            return
+
+        def save(d):
+            vault.add_entry(**d)
+            root = self.winfo_toplevel()
+            if hasattr(root, "refresh_status"):
+                root.refresh_status()
+            tab = getattr(root, "_vault_tab", None)
+            if tab is not None:
+                tab.refresh()
+
+        EntryDialog(self.winfo_toplevel(), "Save to vault", save, existing={"password": pw})
+
+    def _save_gen(self):
+        self._save_password(self._gout.cget("text"))
 
     def _gen_phrase(self):
-        self._pout.config(text="-".join(secrets.choice(_WORDS) for _ in range(self._wc.get())))
+        phrase = "-".join(secrets.choice(_WORDS) for _ in range(int(self._wc.get())))
+        self._pout.configure(text=phrase)
+        bits = passphrase_entropy_bits(int(self._wc.get()), len(_WORDS))
+        self._pbits.configure(
+            text=f"About {bits:.0f} bits if the words are chosen uniformly from this list.",
+        )
 
     def _copy_phrase(self):
         p = self._pout.cget("text")
         if p:
-            copy_to_clipboard(self, p)
+            copy_to_clipboard(self, p, button=self._copy_phrase_btn)
+
+    def _save_phrase(self):
+        self._save_password(self._pout.cget("text"))

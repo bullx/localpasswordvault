@@ -1,80 +1,120 @@
 # -*- mode: python ; coding: utf-8 -*-
-# One-file desktop build. From repo root (venv activated recommended):
-#   pip install pyinstaller
-#   pyinstaller localpasswordvault.spec
-#
-# Output: dist/LocalPasswordVault.exe (Windows) or dist/LocalPasswordVault (macOS)
-# Vault files are created next to the executable at runtime.
+"""Folder build of the Qt app. Run from the repo root:
 
-import os
+    python -m PyInstaller --noconfirm --clean localpasswordvault.spec
 
-from PyInstaller.utils.hooks import collect_all
+A one-file executable unpacks itself on every launch, which is the slow start.
+This build leaves the libraries beside the executable and omits Qt modules the
+vault does not load (WebEngine, 3D, multimedia, charts).
+"""
 
-block_cipher = None
-SPECPATH = os.path.dirname(os.path.abspath(SPEC))
+from PyInstaller.utils.hooks import collect_submodules
 
-ctk_datas, ctk_binaries, ctk_hiddenimports = collect_all("customtkinter")
-qr_datas, qr_binaries, qr_hiddenimports = collect_all("qrcode")
-
-# Flat sibling modules — must be named explicitly so one-file builds include them
-# (a root __init__.py previously caused Analysis to miss top-level "config").
-_LOCAL_MODULES = [
-    "config",
-    "crypto",
-    "totp",
-    "vault_db",
-    "ui_common",
-    "ui_async",
-    "screen_unlock",
-    "tab_vault",
-    "tab_encrypt",
-    "tab_generate",
-    "tab_settings",
-    "dialogs_2fa",
+datas = [
+    ("qt_ui/qml", "qt_ui/qml"),
+    ("wordlist.txt", "."),
 ]
 
+hiddenimports = collect_submodules("qt_ui") + [
+    "config",
+    "crypto",
+    "vault_db",
+    "totp",
+    "qrcode",
+    "cryptography.hazmat.primitives.kdf.argon2",
+    "cryptography.hazmat.primitives.ciphers.aead",
+    "PySide6.QtQuick",
+    "PySide6.QtQuickControls2",
+    "PySide6.QtQml",
+]
+
+excludes = [
+    "customtkinter",
+    "tkinter",
+    "PIL",
+    "PySide6.QtWebEngine",
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtWebEngineQuick",
+    "PySide6.QtWebChannel",
+    "PySide6.QtWebSockets",
+    "PySide6.Qt3DCore",
+    "PySide6.Qt3DRender",
+    "PySide6.Qt3DExtras",
+    "PySide6.Qt3DInput",
+    "PySide6.Qt3DLogic",
+    "PySide6.Qt3DAnimation",
+    "PySide6.QtMultimedia",
+    "PySide6.QtMultimediaWidgets",
+    "PySide6.QtPdf",
+    "PySide6.QtPdfWidgets",
+    "PySide6.QtCharts",
+    "PySide6.QtDataVisualization",
+    "PySide6.QtGraphs",
+    "PySide6.QtGraphsWidgets",
+    "PySide6.QtQuick3D",
+    "PySide6.QtDesigner",
+    "PySide6.QtBluetooth",
+    "PySide6.QtLocation",
+    "PySide6.QtPositioning",
+    "PySide6.QtSensors",
+    "PySide6.QtSerialPort",
+    "PySide6.QtTextToSpeech",
+    "PySide6.QtSpatialAudio",
+    "PySide6.QtSql",
+    "PySide6.QtTest",
+    "PySide6.QtHelp",
+]
+
+# Software OpenGL and the widgets library are not used. Qt Quick draws with
+# the normal Windows graphics driver.
+_DROP = ("opengl32sw.dll", "qt6pdf.dll", "qdirect2d.dll")
+
+
+def _keep_binary(entry) -> bool:
+    name = str(entry[0]).replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name not in _DROP
+
+
 a = Analysis(
-    [os.path.join(SPECPATH, "app.py")],
-    pathex=[SPECPATH],
-    binaries=ctk_binaries + qr_binaries,
-    datas=ctk_datas + qr_datas + [(os.path.join(SPECPATH, "wordlist.txt"), ".")],
-    hiddenimports=[
-        "customtkinter",
-        "qrcode",
-        "cryptography",
-        "cryptography.hazmat.primitives.kdf.argon2",
-        "cryptography.hazmat.primitives.ciphers.aead",
-    ] + _LOCAL_MODULES + ctk_hiddenimports + qr_hiddenimports,
-    hookspath=[],
+    ["app.py"],
+    pathex=[],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=["packaging/hooks"],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
+    excludes=excludes,
     noarchive=False,
+    optimize=0,
 )
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+a.binaries = [entry for entry in a.binaries if _keep_binary(entry)]
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="LocalPasswordVault",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="LocalPasswordVault",
 )

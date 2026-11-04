@@ -16,7 +16,7 @@ from config import (
 from crypto import pw_strength
 from totp import tfa
 from vault_db import vault
-from ui_common import EWP, StrengthBar, sep, abtn, gbtn, shadow_card
+from ui_common import EWP, SecretEntry, StrengthBar, sep, abtn, gbtn, shadow_card
 from ui_async import run_async, is_busy
 
 
@@ -32,15 +32,13 @@ class UnlockScreen(ctk.CTkFrame):
         self._col = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         self._col.place(relx=0.5, rely=0.5, anchor="center")
 
-        ctk.CTkLabel(self._col, text="🔐", fg_color="transparent",
-                     font=_font(56)).pack(pady=(0, pad(8)))
         ctk.CTkLabel(self._col, text="LocalPasswordVault", fg_color="transparent",
-                     text_color=C["accent"], font=ctk_font_display()).pack()
+                     text_color=C["text"], font=ctk_font_display()).pack()
         ctk.CTkLabel(
             self._col,
-            text="SQLite · Argon2id · AES-256-GCM · App 2FA",
+            text="Local vault. Argon2id and AES-256-GCM.",
             fg_color="transparent", text_color=C["subtext"], font=ctk_font_caption(),
-        ).pack(pady=(pad(6), pad(28)))
+        ).pack(pady=(pad(6), pad(20)))
 
         self._card_outer, self._card = shadow_card(self._col)
         self._card_outer.pack(fill="x", ipadx=10, ipady=4)
@@ -109,6 +107,7 @@ class UnlockScreen(ctk.CTkFrame):
         self._build_create()
 
     def _build_step1(self):
+        vault.abort_unlock()
         self._clear_card()
         c = self._card
         pad_f = ctk.CTkFrame(c, fg_color=C["surface"], corner_radius=0)
@@ -128,7 +127,7 @@ class UnlockScreen(ctk.CTkFrame):
         ctk.CTkLabel(c, text="Password / Recovery Passphrase",
                      fg_color="transparent", text_color=C["subtext"],
                      font=ctk_font_label()).pack(anchor="w")
-        self._pw = EWP(c, placeholder="Master password or recovery passphrase", show_char="•")
+        self._pw = SecretEntry(c, placeholder="Master password or recovery passphrase")
         self._pw.pack(fill="x", pady=(pad(6), 0))
 
         self._msg = ctk.CTkLabel(c, text="", fg_color="transparent",
@@ -158,7 +157,7 @@ class UnlockScreen(ctk.CTkFrame):
         self._msg.configure(text="Verifying… (Argon2id)", text_color=C["subtext"])
 
         def work():
-            kind = vault.verify_passphrase(pw)
+            kind = vault.begin_unlock(pw)
             if not kind:
                 return "fail"
             if kind == "recovery":
@@ -167,13 +166,23 @@ class UnlockScreen(ctk.CTkFrame):
                 if tfa.load(pw):
                     return "2fa"
                 tfa.unload()
+                vault.abort_unlock()
+                return "fail"
             return "ok"
 
-        run_async(self, work, self._on_step1_done)
+        run_async(
+            self, work, self._on_step1_done,
+            on_error=lambda _e: self._msg.configure(
+                text="Could not open the vault.", text_color=C["danger"]),
+        )
 
     def _complete_unlock(self, pw: str) -> bool:
-        """Unlock and either finish or force post-recovery master reset."""
-        if not vault.unlock(pw):
+        """Open the session stashed by begin_unlock, or unlock directly."""
+        if vault.has_pending():
+            ok = vault.finish_unlock()
+        else:
+            ok = vault.unlock(pw)
+        if not ok:
             return False
         self._pending_pw = None
         if vault.unlocked_via_recovery:
@@ -189,7 +198,7 @@ class UnlockScreen(ctk.CTkFrame):
                 self._build_corrupt()
                 return
             self._msg.configure(
-                text="❌  Wrong password. Neither master nor recovery matched.",
+                text="Wrong password. Neither master nor recovery matched.",
                 text_color=C["danger"])
         elif result == "2fa":
             self._verified_pw = pw
@@ -199,14 +208,14 @@ class UnlockScreen(ctk.CTkFrame):
             self.update_idletasks()
             if not self._complete_unlock(pw):
                 self._msg.configure(
-                    text="❌  Recovery unlock failed.\n"
+                    text="Recovery unlock failed.\n"
                          "Legacy vaults may need a one-time master unlock first.",
                     text_color=C["danger"])
         else:
             self._msg.configure(text="Unlocking…", text_color=C["subtext"])
             self.update_idletasks()
             if not self._complete_unlock(pw):
-                self._msg.configure(text="❌  Could not open vault. Try again.", text_color=C["danger"])
+                self._msg.configure(text="Could not open vault. Try again.", text_color=C["danger"])
 
     def _restore_backup(self):
         if is_busy(self):
@@ -229,11 +238,11 @@ class UnlockScreen(ctk.CTkFrame):
             vault.lock()
             if self._complete_unlock(pw):
                 if not vault.unlocked_via_recovery:
-                    self._msg.configure(text="✅  Restored! Unlocking…", text_color=C["success"])
+                    self._msg.configure(text="Restored. Unlocking…", text_color=C["success"])
             else:
-                self._msg.configure(text="❌  Restored but unlock failed.", text_color=C["danger"])
+                self._msg.configure(text="Restored, but unlock failed.", text_color=C["danger"])
         else:
-            self._msg.configure(text="❌  Backup restore failed — wrong password?", text_color=C["danger"])
+            self._msg.configure(text="Backup restore failed.", text_color=C["danger"])
 
     def _build_reset_master(self):
         """Forced after recovery unlock — set a new master before using the vault."""
@@ -256,11 +265,11 @@ class UnlockScreen(ctk.CTkFrame):
 
         ctk.CTkLabel(c, text="New Master Password", fg_color="transparent",
                      text_color=C["subtext"], font=ctk_font_label()).pack(anchor="w")
-        self._new_master = EWP(c, placeholder="New master password", show_char="•")
+        self._new_master = SecretEntry(c, placeholder="New master password")
         self._new_master.pack(fill="x", pady=(pad(6), 0))
         ctk.CTkLabel(c, text="Confirm New Master Password", fg_color="transparent",
                      text_color=C["subtext"], font=ctk_font_label()).pack(anchor="w", pady=(pad(10), 0))
-        self._new_master2 = EWP(c, placeholder="Confirm new master password", show_char="•")
+        self._new_master2 = SecretEntry(c, placeholder="Confirm new master password")
         self._new_master2.pack(fill="x", pady=(pad(6), 0))
 
         self._str_bar = StrengthBar(c)
@@ -302,7 +311,7 @@ class UnlockScreen(ctk.CTkFrame):
 
         def done(ok):
             if not ok:
-                self._msg.configure(text="❌  Could not set new master.", text_color=C["danger"])
+                self._msg.configure(text="Could not set new master.", text_color=C["danger"])
                 return
             self._cb()
 
@@ -348,7 +357,7 @@ class UnlockScreen(ctk.CTkFrame):
         if tfa.verify_totp(code):
             self._finish_unlock()
         else:
-            self._otp_msg.configure(text="❌  Incorrect code. Try again or use a recovery code.")
+            self._otp_msg.configure(text="Incorrect code. Try again or use a recovery code.")
 
     def _build_step2_recovery(self):
         self._clear_card()
@@ -415,7 +424,7 @@ class UnlockScreen(ctk.CTkFrame):
         if ok:
             self._finish_unlock()
         else:
-            self._rec_msg.configure(text="❌  Invalid or already-used recovery code.")
+            self._rec_msg.configure(text="Invalid or already-used recovery code.")
 
     def _finish_unlock(self):
         pw = self._verified_pw
@@ -424,21 +433,21 @@ class UnlockScreen(ctk.CTkFrame):
         root = self.winfo_toplevel()
         if not self._complete_unlock(pw):
             if hasattr(self, "_otp_msg"):
-                self._otp_msg.configure(text="❌  Could not unlock vault.", text_color=C["danger"])
+                self._otp_msg.configure(text="Could not unlock vault.", text_color=C["danger"])
             elif hasattr(self, "_rec_msg"):
-                self._rec_msg.configure(text="❌  Could not unlock vault.", text_color=C["danger"])
+                self._rec_msg.configure(text="Could not unlock vault.", text_color=C["danger"])
             return
         remaining = tfa.recovery_codes_remaining()
         self._verified_pw = None
         if 0 < remaining <= 3:
             root.after(500, lambda: messagebox.showwarning(
                 "Low Recovery Codes",
-                f"⚠️  Only {remaining} recovery code(s) remaining.\n\n"
+                f"Only {remaining} recovery code(s) remaining.\n\n"
                 "Go to Settings → 2FA to regenerate your codes."))
         elif remaining == 0:
             root.after(500, lambda: messagebox.showwarning(
                 "No Recovery Codes Left",
-                "⚠️  You have used all recovery codes.\n\n"
+                "You have used all recovery codes.\n\n"
                 "Go to Settings → 2FA → Regenerate Codes immediately."))
 
     def _clear_card(self):
@@ -461,11 +470,11 @@ class UnlockScreen(ctk.CTkFrame):
 
         ctk.CTkLabel(c, text="Master Password", fg_color="transparent",
                      text_color=C["subtext"], font=ctk_font_label()).pack(anchor="w")
-        self._pw = EWP(c, placeholder="Choose a strong master password", show_char="•")
+        self._pw = SecretEntry(c, placeholder="Choose a strong master password")
         self._pw.pack(fill="x", pady=(4, 0))
         ctk.CTkLabel(c, text="Confirm Master Password", fg_color="transparent",
                      text_color=C["subtext"], font=ctk_font_label()).pack(anchor="w", pady=(10, 0))
-        self._pw2 = EWP(c, placeholder="Confirm master password", show_char="•")
+        self._pw2 = SecretEntry(c, placeholder="Confirm master password")
         self._pw2.pack(fill="x", pady=(4, 0))
 
         self._str_bar = StrengthBar(c)
@@ -488,11 +497,11 @@ class UnlockScreen(ctk.CTkFrame):
             fg_color="transparent", text_color=C["subtext"], font=ctk_font_caption(),
             justify="left",
         ).pack(anchor="w", pady=(0, 8))
-        self._rec = EWP(c, placeholder="e.g.  My dog Biscuit was born in 2015", show_char="•")
+        self._rec = SecretEntry(c, placeholder="e.g.  My dog Biscuit was born in 2015")
         self._rec.pack(fill="x", pady=(0, 4))
         ctk.CTkLabel(c, text="Confirm Recovery Passphrase", fg_color="transparent",
                      text_color=C["subtext"], font=ctk_font_label()).pack(anchor="w")
-        self._rec2 = EWP(c, placeholder="Confirm recovery passphrase", show_char="•")
+        self._rec2 = SecretEntry(c, placeholder="Confirm recovery passphrase")
         self._rec2.pack(fill="x", pady=(4, 0))
 
         self._msg = ctk.CTkLabel(c, text="", fg_color="transparent",
@@ -538,12 +547,12 @@ class UnlockScreen(ctk.CTkFrame):
 
         def done(ok):
             if not ok:
-                self._msg.configure(text="❌  Could not create vault.", text_color=C["danger"])
+                self._msg.configure(text="Could not create vault.", text_color=C["danger"])
                 return
             vault.lock()
             if vault.unlock(pw):
                 self._cb()
             else:
-                self._msg.configure(text="❌  Vault created but could not open.", text_color=C["danger"])
+                self._msg.configure(text="Vault created but could not open.", text_color=C["danger"])
 
         run_async(self, work, done)

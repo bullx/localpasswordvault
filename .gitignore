@@ -27,6 +27,7 @@ localpasswordvault.db-shm
 localpasswordvault.db-journal
 localpasswordvault.2fa
 localpasswordvault.2fa.tmp
+localpasswordvault.prefs
 # Legacy SecureVault filenames (pre-rename)
 securevault.db
 securevault.db.bak

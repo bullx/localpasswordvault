@@ -2,6 +2,7 @@
 cryptography>=42.0.0
 customtkinter>=6.0.0
 qrcode>=7.4
+PySide6>=6.6.0
 
 # Transitive pins commonly resolved on Windows wheels (optional explicit pins)
 cffi>=1.16.0

@@ -57,17 +57,18 @@ def style_tab_bar(tabview):
 
 # ─────────────────────────── Mousewheel Helper ───────────────────────────
 
-def copy_to_clipboard(widget, text: str, clear_ms: int = CLIPBOARD_CLEAR_MS):
+def copy_to_clipboard(widget, text: str, clear_ms: int = CLIPBOARD_CLEAR_MS, button=None):
     """Copy text and schedule clipboard clear (cancels any previous timer)."""
     if not text:
-        return
+        return False
     root = widget.winfo_toplevel()
     try:
         root.clipboard_clear()
         root.clipboard_append(text)
         root.update_idletasks()
     except Exception:
-        return
+        return False
+    root._sv_clip_value = text
     prev = getattr(root, "_sv_clip_after", None)
     if prev is not None:
         try:
@@ -77,15 +78,62 @@ def copy_to_clipboard(widget, text: str, clear_ms: int = CLIPBOARD_CLEAR_MS):
 
     def _clear():
         root._sv_clip_after = None
-        try:
-            # Best-effort: clear only if still our value
-            if root.clipboard_get() == text:
-                root.clipboard_clear()
-        except Exception:
-            pass
+        _clear_if_ours(root, text)
 
     if clear_ms and clear_ms > 0:
         root._sv_clip_after = root.after(clear_ms, _clear)
+    if button is not None:
+        _flash_copied(button)
+    return True
+
+
+def _clear_if_ours(root, text: str):
+    try:
+        if root.clipboard_get() == text:
+            root.clipboard_clear()
+    except Exception:
+        pass
+    if getattr(root, "_sv_clip_value", None) == text:
+        root._sv_clip_value = None
+
+
+def clear_app_clipboard(widget):
+    """On lock, drop a secret this process placed on the clipboard."""
+    root = widget.winfo_toplevel()
+    prev = getattr(root, "_sv_clip_after", None)
+    if prev is not None:
+        try:
+            root.after_cancel(prev)
+        except Exception:
+            pass
+        root._sv_clip_after = None
+    secret = getattr(root, "_sv_clip_value", None)
+    if secret:
+        _clear_if_ours(root, secret)
+    root._sv_clip_value = None
+
+
+def _flash_copied(button):
+    try:
+        old = button.cget("text")
+    except Exception:
+        return
+    gen = getattr(button, "_copy_gen", 0) + 1
+    button._copy_gen = gen
+
+    def _restore(b=button, t=old, g=gen):
+        if getattr(b, "_copy_gen", 0) != g:
+            return
+        try:
+            b.configure(text=t)
+        except Exception:
+            pass
+
+    try:
+        button.configure(text="Copied")
+        button.after(1200, _restore)
+    except Exception:
+        pass
 
 
 def _bind_mousewheel(canvas):
@@ -103,6 +151,9 @@ def _bind_mousewheel(canvas):
             canvas.yview_scroll(1, "units")
 
     def _bind_to_widget(widget):
+        if getattr(widget, "_lpv_wheel", False):
+            return
+        widget._lpv_wheel = True
         if PLATFORM in ("Windows", "Darwin"):
             widget.bind("<MouseWheel>", _on_mousewheel, add="+")
         else:
@@ -112,7 +163,13 @@ def _bind_mousewheel(canvas):
             _bind_to_widget(child)
 
     _bind_to_widget(canvas)
-    canvas.bind("<Configure>", lambda e: _bind_to_widget(canvas), add='+')
+    if not getattr(canvas, "_lpv_wheel_cfg", False):
+        canvas._lpv_wheel_cfg = True
+
+        def _on_configure(_event=None):
+            _bind_to_widget(canvas)
+
+        canvas.bind("<Configure>", _on_configure, add="+")
 
 # ─────────────────────────── QR Code Renderer ───────────────────────────
 
@@ -200,11 +257,24 @@ class EWP(ctk.CTkEntry):
             placeholder_text_color=C["input_ph"],
             corner_radius=pad(8),
             height=height,
+            border_width=1,
             **kw,
         )
+        self.bind("<FocusIn>", self._focus_in)
+        self.bind("<FocusOut>", self._focus_out)
+
+    def _focus_in(self, _event=None):
+        self.configure(border_color=C["ring"])
+
+    def _focus_out(self, _event=None):
+        self.configure(border_color=C["border"])
 
     def val(self):
         return self.get()
+
+    def bind(self, sequence=None, command=None, add="+"):
+        # CTkEntry rejects add=None; extra bindings must keep its internal callbacks.
+        return super().bind(sequence, command, add=add)
 
     def set_val(self, v):
         self.delete(0, "end")
@@ -213,6 +283,41 @@ class EWP(ctk.CTkEntry):
 
     def _set_ph(self):
         self.delete(0, "end")
+
+
+class SecretEntry(ctk.CTkFrame):
+    """Masked entry with a Show / Hide control. Same val() / bind() API as EWP."""
+
+    def __init__(self, master, placeholder="", **kw):
+        super().__init__(master, fg_color="transparent", corner_radius=0)
+        self._shown = False
+        self._entry = EWP(self, placeholder=placeholder, show_char="•", **kw)
+        self._entry.pack(side="left", fill="x", expand=True)
+        self._btn = gbtn(self, "Show", self._toggle)
+        self._btn.pack(side="left", padx=(8, 0))
+
+    def _toggle(self):
+        self._shown = not self._shown
+        self._entry.configure(show="" if self._shown else "•")
+        self._btn.configure(text="Hide" if self._shown else "Show")
+
+    def val(self):
+        return self._entry.val()
+
+    def set_val(self, v):
+        self._entry.set_val(v)
+
+    def _set_ph(self):
+        self._shown = False
+        self._entry.configure(show="•")
+        self._btn.configure(text="Show")
+        self._entry._set_ph()
+
+    def bind(self, sequence, func, add="+"):
+        return self._entry.bind(sequence, func, add=add)
+
+    def focus_set(self):
+        self._entry.focus_set()
 
 
 def sep(parent, **kw):
@@ -285,18 +390,23 @@ def _btn(parent, text, cmd,
 
 def abtn(parent, text, cmd, color=None):
     bg = color or C["accent"]
+    fg = C["on_danger"] if color == C["danger"] else C["on_accent"]
+    hover = C["amber2"] if color not in (None, C["accent"]) else C["accent2"]
+    if color == C["success"] or color == C["danger"]:
+        hover = C["accent2"] if color == C["success"] else "#B91C1C"
+        fg = C["on_accent"] if color == C["success"] else C["on_danger"]
     return _btn(parent, text, cmd,
-                bg=bg, fg="#FFFFFF",
-                hover_bg=C["accent2"],
+                bg=bg, fg=fg,
+                hover_bg=hover,
                 font_style=ctk_font_body("bold"),
                 padx=pad(20), pady=pad(10))
 
 
 def gbtn(parent, text, cmd, fg=None):
-    tc = fg or C["accent"]
+    tc = fg or C["text"]
     return _btn(parent, text, cmd,
                 bg=C["surface"], fg=tc,
-                hover_bg=C["accent_soft"],
+                hover_bg=C["surface3"],
                 font_style=ctk_font_label("bold"),
                 padx=pad(14), pady=pad(8),
                 border=1, border_color=C["border"])
@@ -304,8 +414,8 @@ def gbtn(parent, text, cmd, fg=None):
 
 def dbtn(parent, text, cmd):
     return _btn(parent, text, cmd,
-                bg=C["danger"], fg="#FFFFFF",
-                hover_bg="#B02020",
+                bg=C["danger"], fg=C["on_danger"],
+                hover_bg="#B91C1C",
                 font_style=ctk_font_label("bold"),
                 padx=pad(14), pady=pad(8))
 
@@ -336,7 +446,7 @@ def info_row(parent, label, value, desc=""):
         font=ctk_font_caption(), width=pad(128), anchor="w",
     ).pack(side="left")
     ctk.CTkLabel(
-        r, text=value, fg_color="transparent", text_color=C["accent"],
+        r, text=value, fg_color="transparent", text_color=C["text"],
         font=ctk_font_mono(10, "bold"),
     ).pack(side="left", padx=pad(8))
     if desc:
@@ -348,19 +458,23 @@ def info_row(parent, label, value, desc=""):
 # ─────────────────────────── Mode Selector ───────────────────────────
 
 class ModeSelector:
-    """Two-panel mode toggle."""
-    _CFG = {
-        "encrypt": dict(icon="\U0001f512", label="ENCRYPT",
-                        sub="Plaintext  \u2192  Encrypted Token",
-                        hint="Type or paste your secret text, get a safe encrypted blob",
-                        bg_on="#E8F4FF", border=C["accent"], icon_c=C["accent"],
-                        text_on="#004A80", badge_bg=C["accent"], badge_fg=C["bg"]),
-        "decrypt": dict(icon="\U0001f513", label="DECRYPT",
-                        sub="Encrypted Token  \u2192  Plaintext",
-                        hint="Paste an encrypted token, recover your original text",
-                        bg_on="#FFF3E8", border=C["amber"],  icon_c=C["amber"],
-                        text_on="#7A3B00", badge_bg=C["amber"],  badge_fg=C["bg"]),
+    """Two-panel mode toggle. Colors are read from the active palette at build time."""
+    _TEXT = {
+        "encrypt": ("ENCRYPT", "Plaintext  \u2192  Encrypted token",
+                    "Type or paste secret text and get an encrypted blob"),
+        "decrypt": ("DECRYPT", "Encrypted token  \u2192  Plaintext",
+                    "Paste an encrypted token and recover the original text"),
     }
+
+    def _cfg(self, val):
+        label, sub, hint = self._TEXT[val]
+        if val == "encrypt":
+            return dict(label=label, sub=sub, hint=hint,
+                        bg_on=C["encrypt_bg"], border=C["accent"], icon_c=C["accent"],
+                        text_on=C["encrypt_fg"], badge_bg=C["accent"], badge_fg=C["on_accent"])
+        return dict(label=label, sub=sub, hint=hint,
+                    bg_on=C["decrypt_bg"], border=C["amber"], icon_c=C["amber"],
+                    text_on=C["decrypt_fg"], badge_bg=C["amber"], badge_fg=C["on_accent"])
 
     def __init__(self, master, var, on_change=None):
         self._var = var
@@ -375,7 +489,8 @@ class ModeSelector:
         self.frame.pack(**kw)
 
     def _build(self):
-        for ci, (val, cfg) in enumerate(self._CFG.items()):
+        for ci, val in enumerate(self._TEXT):
+            cfg = self._cfg(val)
             outer = ctk.CTkFrame(self.frame, fg_color=C["border"], corner_radius=pad(10), cursor="hand2")
             outer.pack(side="left", fill="both", expand=True,
                        padx=(0, 2) if ci == 0 else (2, 0))
@@ -387,8 +502,8 @@ class ModeSelector:
             body.pack(fill="both", expand=True, padx=20, pady=14)
             top = ctk.CTkFrame(body, fg_color=C["surface2"], corner_radius=0)
             top.pack(fill="x")
-            icon = ctk.CTkLabel(top, text=cfg["icon"], fg_color="transparent",
-                                text_color=C["subtext"], font=_font(30))
+            icon = ctk.CTkLabel(top, text=cfg["label"][:1], fg_color="transparent",
+                                text_color=C["subtext"], font=_font(22, "bold"))
             icon.pack(side="left")
             badge = ctk.CTkLabel(top, text=cfg["label"], fg_color=C["surface2"],
                                  text_color=C["subtext"], font=_font(9, "bold"),
@@ -481,7 +596,8 @@ class TOTPWidget(ctk.CTkFrame):
 
         btn_row = ctk.CTkFrame(right, fg_color="transparent")
         btn_row.pack(anchor="w", pady=(2, 0))
-        gbtn(btn_row, "Copy Code", self._copy).pack(side="left")
+        self._copy_btn = gbtn(btn_row, "Copy code", self._copy)
+        self._copy_btn.pack(side="left")
 
         self._tick()
 
@@ -514,7 +630,7 @@ class TOTPWidget(ctk.CTkFrame):
     def _copy(self):
         code = self._code_var.get().replace(" ", "")
         if code and code != "Invalid":
-            copy_to_clipboard(self, code)
+            copy_to_clipboard(self, code, button=getattr(self, "_copy_btn", None))
 
     def stop(self):
         self._running = False
